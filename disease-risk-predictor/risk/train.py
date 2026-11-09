@@ -1,13 +1,3 @@
-"""Train and compare several models, keep the best one.
-
-Usage (from the project root):
-    python -m risk.train                 # trains, saves model + reports (+ plots if matplotlib is installed)
-    python -m risk.train --no-plots
-    python -m risk.train --data path/to/diabetes.csv
-
-The best model is chosen on cross-validated ROC AUC computed on the TRAINING set only.
-The test set is used once at the end for the final numbers, so they are not inflated.
-"""
 import argparse
 import json
 from datetime import datetime, timezone
