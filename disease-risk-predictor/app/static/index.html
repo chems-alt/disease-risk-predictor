@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diabetes Risk Predictor</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1c2230; --muted:#6b7385; --line:#dfe3ea; --accent:#2f7ff0; --low:#2da44e; --mod:#e8a317; --high:#e5484d; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151c; --card:#1b2029; --text:#e8ebf2; --muted:#8e97ab; --line:#2a313e; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:20px 24px; border-bottom:1px solid var(--line); }
+  h1 { margin:0; font-size:20px; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:14px; }
+  main { max-width:960px; margin:0 auto; padding:24px; display:grid; gap:20px; grid-template-columns:1fr 1fr; }
+  @media (max-width:760px) { main { grid-template-columns:1fr; } }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  h2 { margin:0 0 12px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  label { display:block; font-size:14px; margin-bottom:12px; }
+  label span { display:block; color:var(--muted); font-size:12px; margin-top:2px; }
+  input { width:100%; margin-top:4px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--text); font-size:15px; }
+  button { width:100%; padding:11px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  #result { display:none; }
+  .big { font-size:42px; font-weight:700; line-height:1.1; }
+  .tag { display:inline-block; padding:3px 10px; border-radius:99px; color:#fff; font-size:13px; font-weight:600; margin-left:8px; vertical-align:middle; }
+  .bar { height:12px; border-radius:99px; background:var(--line); margin:14px 0 6px; overflow:hidden; }
+  .bar > div { height:100%; width:0; transition:width .4s; }
+  .note { color:var(--muted); font-size:13px; margin-top:10px; }
+  .error { color:var(--high); font-size:14px; margin-top:10px; }
+  .imp { display:grid; grid-template-columns:150px 1fr; align-items:center; gap:8px; font-size:13px; margin:6px 0; }
+  .imp div.b { height:8px; border-radius:4px; background:var(--accent); }
+  .metrics { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; font-size:13px; }
+  .metrics b { display:block; font-size:18px; }
+  .warn { grid-column:1 / -1; font-size:13px; color:var(--muted); text-align:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Diabetes Risk Predictor</h1>
+  <p>Enter a few measurements to get an estimated risk. Leave a field empty if you don't know it.</p>
+</header>
+<main>
+  <section class="panel">
+    <h2>Measurements</h2>
+    <form id="form" novalidate>
+      <label>Age (years)<input name="Age" type="number" min="18" max="100" required value="45"></label>
+      <label>Pregnancies<input name="Pregnancies" type="number" min="0" max="20" required value="2"></label>
+      <label>Glucose (mg/dL)<input name="Glucose" type="number" min="20" max="300" step="any" value="138"></label>
+      <label>Blood pressure, diastolic (mm Hg)<input name="BloodPressure" type="number" min="20" max="200" step="any" value="72"></label>
+      <label>Skin fold thickness (mm)<input name="SkinThickness" type="number" min="1" max="100" step="any" placeholder="unknown"></label>
+      <label>Insulin (mu U/ml)<input name="Insulin" type="number" min="1" max="900" step="any" placeholder="unknown"></label>
+      <label>BMI<input name="BMI" type="number" min="10" max="70" step="any" value="33.6"></label>
+      <label>Family history score<span>Diabetes pedigree function, typically 0.1 to 1.5</span>
+        <input name="DiabetesPedigreeFunction" type="number" min="0" max="2.5" step="any" required value="0.5"></label>
+      <button id="go" type="submit">Estimate risk</button>
+      <div id="error" class="error" role="alert"></div>
+    </form>
+  </section>
+
+  <div style="display:grid;gap:20px;align-content:start">
+    <section class="panel" id="result" aria-live="polite">
+      <h2>Result</h2>
+      <div><span class="big" id="pct">0%</span><span class="tag" id="level"></span></div>
+      <div class="bar"><div id="fill"></div></div>
+      <div id="summary"></div>
+      <div class="note" id="missing"></div>
+    </section>
+
+    <section class="panel">
+      <h2>About the model</h2>
+      <div id="about" class="note">Loading…</div>
+      <div id="metrics" class="metrics" style="margin-top:10px"></div>
+    </section>
+
+    <section class="panel">
+      <h2>What matters most</h2>
+      <div id="imp"></div>
+    </section>
+  </div>
+
+  <p class="warn" id="disclaimer">Educational demo, not medical advice.</p>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const COLORS = { low:'var(--low)', moderate:'var(--mod)', high:'var(--high)' };
+
+function el(tag, text, cls) { const e = document.createElement(tag); e.textContent = text; if (cls) e.className = cls; return e; }
+
+async function loadInfo() {
+  try {
+    const m = await (await fetch('/model-info')).json();
+    $('about').textContent = `${m.model_name}, trained on ${m.dataset.rows} records (${Math.round(m.dataset.positive_rate*100)}% positive). Scores below come from ${m.dataset.test_rows} records the model never saw.`;
+    const t = m.test_metrics;
+    $('metrics').replaceChildren(...[['ROC AUC', t.roc_auc], ['Accuracy', t.accuracy], ['Recall', t.recall], ['Precision', t.precision]]
+      .map(([k, v]) => { const d = document.createElement('div'); const b = el('b', v.toFixed(2)); d.append(b, k); return d; }));
+    const max = Math.max(...m.feature_importance.map(f => f.importance), 0.001);
+    $('imp').replaceChildren(...m.feature_importance.map(f => {
+      const row = document.createElement('div'); row.className = 'imp';
+      const bar = document.createElement('div'); bar.className = 'b'; bar.style.width = Math.max(2, 100 * Math.max(f.importance, 0) / max) + '%';
+      row.append(el('span', f.feature), bar); return row;
+    }));
+  } catch { $('about').textContent = 'Model information unavailable.'; }
+}
+
+$('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('error').textContent = '';
+  const body = {};
+  for (const [k, v] of new FormData(e.target)) body[k] = v.trim() === '' ? null : Number(v);
+  const btn = $('go'); btn.disabled = true;
+  try {
+    const r = await fetch('/predict', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!r.ok) {
+      const first = Array.isArray(d.detail) ? d.detail[0] : null;
+      throw new Error(first ? `${first.loc.slice(-1)[0]}: ${first.msg}` : (d.detail || 'Request failed'));
+    }
+    const pct = Math.round(d.probability * 100);
+    $('result').style.display = 'block';
+    $('pct').textContent = pct + '%';
+    $('level').textContent = d.risk_level + ' risk';
+    $('level').style.background = COLORS[d.risk_level];
+    $('fill').style.width = pct + '%';
+    $('fill').style.background = COLORS[d.risk_level];
+    $('summary').textContent = `The model gives this profile a score of ${pct}%, which falls in the ${d.risk_level} risk band. This is a model score, not a diagnosis.`;
+    $('missing').textContent = d.missing_inputs.length ? `Not provided, replaced by typical values: ${d.missing_inputs.join(', ')}.` : '';
+    $('disclaimer').textContent = d.disclaimer;
+  } catch (err) {
+    $('error').textContent = err.message;
+  } finally { btn.disabled = false; }
+});
+
+loadInfo();
+</script>
+</body>
+</html>
